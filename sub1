@@ -8,7 +8,6 @@ fi
 
 LOG_FILE="/etc/sing-box/sub_links.txt"
 SUB_FILE="/etc/sing-box/sub_b64.txt"
-CLIENT_JSON="/etc/sing-box/client_config.json"
 SUB_PORT=2082
 
 # 显示当前已保存节点及订阅信息的函数
@@ -21,54 +20,42 @@ show_nodes() {
         cat "$LOG_FILE"
         echo ""
         echo "============================================================"
-        echo "🔗 1. 通用节点订阅 (V2rayN / Shadowrocket / v2rayNG 等):"
+        echo "🔗 通用网页订阅链接 (V2rayN / Shadowrocket / v2rayNG 等直接添加):"
         echo "   http://$IP_ADDR:$SUB_PORT/sub"
-        echo ""
-        echo "🔗 2. SFI / SFA / SFM 专属订阅 (Sing-box 专属 JSON):"
-        echo "   http://$IP_ADDR:$SUB_PORT/sing-box"
         echo "============================================================"
     else
         echo "❌ 未找到已保存的节点信息！请先运行全新部署。"
     fi
 }
 
-# 部署并启动轻量级双路由 HTTP 订阅托管服务
+# 部署并启动轻量级 HTTP 订阅托管服务
 setup_sub_service() {
-    echo "==> 配置 HTTP 双路由订阅托管服务 (端口: $SUB_PORT)..."
+    echo "==> 配置 HTTP 订阅托管服务 (端口: $SUB_PORT)..."
     
     if ! command -v python3 &> /dev/null; then
         apt-get update -y && apt-get install -y python3 2>/dev/null || yum install -y python3 2>/dev/null
     fi
 
+    # 编写后台轻量 HTTP 订阅服务脚本（仅托管 /sub）
     cat > /etc/sing-box/sub_server.py << 'PYEOF'
 import http.server
 import socketserver
 import os
 
 PORT = 2082
-SUB_B64 = "/etc/sing-box/sub_b64.txt"
-CLIENT_JSON = "/etc/sing-box/client_config.json"
+FILE_PATH = "/etc/sing-box/sub_b64.txt"
 
 class SubHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/sub':
-            if os.path.exists(SUB_B64):
+            if os.path.exists(FILE_PATH):
                 self.send_response(200)
                 self.send_header('Content-type', 'text/plain; charset=utf-8')
                 self.end_headers()
-                with open(SUB_B64, 'rb') as f:
+                with open(FILE_PATH, 'rb') as f:
                     self.wfile.write(f.read())
             else:
                 self.send_error(404, "Subscription File Not Found")
-        elif self.path == '/sing-box':
-            if os.path.exists(CLIENT_JSON):
-                self.send_response(200)
-                self.send_header('Content-type', 'application/json; charset=utf-8')
-                self.end_headers()
-                with open(CLIENT_JSON, 'rb') as f:
-                    self.wfile.write(f.read())
-            else:
-                self.send_error(404, "Sing-box Client Config Not Found")
         else:
             self.send_error(403, "Access Denied")
 
@@ -81,6 +68,7 @@ if __name__ == "__main__":
         httpd.serve_forever()
 PYEOF
 
+    # 创建 systemd 开机自启服务
     cat > /etc/systemd/system/hugo-sub.service << SERVICEOF
 [Unit]
 Description=Hugo Sub HTTP Service
@@ -99,7 +87,7 @@ SERVICEOF
     systemctl daemon-reload
     systemctl enable hugo-sub
     systemctl restart hugo-sub
-    echo "✅ 双路由订阅托管服务已启动！"
+    echo "✅ 订阅托管服务已启动！"
 }
 
 # 完全卸载/清理函数
@@ -175,7 +163,8 @@ install_nodes() {
     SHORT_ID="0123456789abcdef"
     SNI="gateway.icloud.com"
 
-    IP=$(curl -s https://api.ipify.org || curl -s https://ifconfig.me)
+    # 多接口获取公网 IP，防止 AWS 环境下失效
+    IP=$(curl -s https://api.ipify.org || curl -s https://ifconfig.me || curl -s https://icanhazip.com)
     if [ -z "$IP" ]; then
         IP="3.141.65.96"
     fi
@@ -415,45 +404,8 @@ $TUIC_LINK
 $SS_LINK
 $TROJAN_LINK
 $SOCKS_LINK"
+    
     echo -n "$RAW_SUBS" | base64 | tr -d '\n' > "$SUB_FILE"
-
-    # 生成规范的 sing-box 客户端专属 JSON 配置 (已移除未知的 up/down 字段)
-    cat > "$CLIENT_JSON" << CLIEOF
-{
-  "log": { "level": "info" },
-  "outbounds": [
-    {
-      "type": "vless", "tag": "Hugo-Reality-TCP", "server": "$IP", "server_port": 443, "uuid": "$UUID", "flow": "xtls-rprx-vision", "packet_encoding": "xudp",
-      "tls": { "enabled": true, "server_name": "$SNI", "utls": { "enabled": true, "fingerprint": "chrome" }, "reality": { "enabled": true, "public_key": "$PUB_KEY", "short_id": "$SHORT_ID" } }
-    },
-    {
-      "type": "vless", "tag": "Hugo-Reality-gRPC", "server": "$IP", "server_port": 444, "uuid": "$UUID", "packet_encoding": "xudp",
-      "tls": { "enabled": true, "server_name": "$SNI", "utls": { "enabled": true, "fingerprint": "chrome" }, "reality": { "enabled": true, "public_key": "$PUB_KEY", "short_id": "$SHORT_ID" } },
-      "transport": { "type": "grpc", "service_name": "hugogrpc" }
-    },
-    {
-      "type": "vless", "tag": "Hugo-XTLS-Reality-8881", "server": "$IP", "server_port": 8881, "uuid": "$UUID", "flow": "xtls-rprx-vision", "packet_encoding": "xudp",
-      "tls": { "enabled": true, "server_name": "$SNI", "utls": { "enabled": true, "fingerprint": "chrome" }, "reality": { "enabled": true, "public_key": "$PUB_KEY", "short_id": "$SHORT_ID" } }
-    },
-    {
-      "type": "hysteria2", "tag": "Hugo-Hysteria2", "server": "$IP", "server_port": 8443, "password": "$HY2_PASS",
-      "tls": { "enabled": true, "insecure": true, "alpn": ["h3"] }
-    },
-    {
-      "type": "tuic", "tag": "Hugo-TuicV5", "server": "$IP", "server_port": 9443, "uuid": "$UUID", "password": "$TUIC_PASS", "congestion_control": "bbr",
-      "tls": { "enabled": true, "insecure": true, "alpn": ["h3"] }
-    },
-    {
-      "type": "shadowsocks", "tag": "Hugo-Shadowsocks", "server": "$IP", "server_port": 6443, "method": "2022-blake3-aes-128-gcm", "password": "$SS_PASS"
-    },
-    {
-      "type": "trojan", "tag": "Hugo-Trojan", "server": "$IP", "server_port": 7443, "password": "$TROJAN_PASS",
-      "tls": { "enabled": true, "insecure": true }
-    },
-    { "type": "direct", "tag": "direct" }
-  ]
-}
-CLIEOF
 
     setup_sub_service
 
