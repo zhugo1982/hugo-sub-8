@@ -12,39 +12,49 @@ CLIENT_JSON="/etc/sing-box/client_config.json"
 CLASH_YAML="/etc/sing-box/clash_config.yaml"
 SUB_PORT=2082
 
-# 显示当前已保存节点及订阅信息的函数
+# 显示当前已保存节点及订阅信息的函数（带自动二维码）
 show_nodes() {
     if [ -f "$LOG_FILE" ]; then
         IP_ADDR=$(curl -s https://api.ipify.org || echo "你的IP")
+        AUTO_URL="http://$IP_ADDR:$SUB_PORT/auto"
+
         echo "============================================================"
         echo "✨ 当前服务器已生成的 8 大协议节点信息如下："
         echo "============================================================"
         cat "$LOG_FILE"
         echo ""
         echo "============================================================"
-        echo "🔗 1. 通用节点订阅 (V2rayN / Shadowrocket / v2rayNG 等):"
-        echo "   http://$IP_ADDR:$SUB_PORT/sub"
-        echo ""
-        echo "🔗 2. SFI / SFA / SFM 订阅 (Sing-box 专属 JSON):"
-        echo "   http://$IP_ADDR:$SUB_PORT/sing-box"
-        echo ""
-        echo "🔗 3. Clash 订阅 (Clash Verge / MetaCubeX 专属 YAML):"
-        echo "   http://$IP_ADDR:$SUB_PORT/clash"
+        echo "🔗 智能自适应订阅链接 (支持 Clash / V2rayN / Throne / 小火箭 / SFI):"
+        echo "   $AUTO_URL"
+        echo "============================================================"
+        
+        # 检查并生成二维码
+        if ! command -v qrencode &> /dev/null; then
+            apt-get update -y && apt-get install -y qrencode 2>/dev/null || yum install -y qrencode 2>/dev/null
+        fi
+
+        if command -v qrencode &> /dev/null; then
+            echo "📱 请使用手机客户端（Shadowrocket / SFI / SFA 等）扫描下方二维码导入订阅："
+            echo ""
+            qrencode -t ANSIUTF8 "$AUTO_URL"
+        else
+            echo "💡 提示: 安装 qrencode 后可在终端直接显示订阅二维码。"
+        fi
         echo "============================================================"
     else
         echo "❌ 未找到已保存的节点信息！请先运行全新部署。"
     fi
 }
 
-# 部署并启动轻量级 HTTP 三路由订阅托管服务
+# 部署并启动轻量级 HTTP 自适应订阅托管服务
 setup_sub_service() {
-    echo "==> 配置 HTTP 三订阅托管服务 (端口: $SUB_PORT)..."
+    echo "==> 配置 HTTP 自适应订阅托管服务 (端口: $SUB_PORT)..."
     
     if ! command -v python3 &> /dev/null; then
         apt-get update -y && apt-get install -y python3 2>/dev/null || yum install -y python3 2>/dev/null
     fi
 
-    # 编写后台轻量 HTTP 订阅服务脚本（支持 /sub, /sing-box, /clash）
+    # 编写后台轻量 HTTP 订阅服务脚本（支持智能 UA 识别与自适应分发）
     cat > /etc/sing-box/sub_server.py << 'PYEOF'
 import http.server
 import socketserver
@@ -57,35 +67,33 @@ CLASH_YAML = "/etc/sing-box/clash_config.yaml"
 
 class SubHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
+        ua = self.headers.get('User-Agent', '').lower()
+        
         if self.path == '/sub':
-            if os.path.exists(SUB_B64):
-                self.send_response(200)
-                self.send_header('Content-type', 'text/plain; charset=utf-8')
-                self.end_headers()
-                with open(SUB_B64, 'rb') as f:
-                    self.wfile.write(f.read())
-            else:
-                self.send_error(404, "Subscription File Not Found")
+            self.send_file(SUB_B64, 'text/plain; charset=utf-8')
         elif self.path == '/sing-box':
-            if os.path.exists(CLIENT_JSON):
-                self.send_response(200)
-                self.send_header('Content-type', 'application/json; charset=utf-8')
-                self.end_headers()
-                with open(CLIENT_JSON, 'rb') as f:
-                    self.wfile.write(f.read())
-            else:
-                self.send_error(404, "Sing-box Client Config Not Found")
+            self.send_file(CLIENT_JSON, 'application/json; charset=utf-8')
         elif self.path == '/clash':
-            if os.path.exists(CLASH_YAML):
-                self.send_response(200)
-                self.send_header('Content-type', 'text/yaml; charset=utf-8')
-                self.end_headers()
-                with open(CLASH_YAML, 'rb') as f:
-                    self.wfile.write(f.read())
+            self.send_file(CLASH_YAML, 'text/yaml; charset=utf-8')
+        elif self.path == '/auto':
+            if any(k in ua for k in ['clash', 'meta', 'verge', 'nyanpasu']):
+                self.send_file(CLASH_YAML, 'text/yaml; charset=utf-8')
+            elif any(k in ua for k in ['sing-box', 'sfi', 'sfa', 'sfm']):
+                self.send_file(CLIENT_JSON, 'application/json; charset=utf-8')
             else:
-                self.send_error(404, "Clash Config Not Found")
+                self.send_file(SUB_B64, 'text/plain; charset=utf-8')
         else:
             self.send_error(403, "Access Denied")
+
+    def send_file(self, filepath, content_type):
+        if os.path.exists(filepath):
+            self.send_response(200)
+            self.send_header('Content-type', content_type)
+            self.end_headers()
+            with open(filepath, 'rb') as f:
+                self.wfile.write(f.read())
+        else:
+            self.send_error(404, "Subscription File Not Found")
 
     def log_message(self, format, *args):
         return
@@ -96,7 +104,6 @@ if __name__ == "__main__":
         httpd.serve_forever()
 PYEOF
 
-    # 创建 systemd 开机自启服务
     cat > /etc/systemd/system/hugo-sub.service << SERVICEOF
 [Unit]
 Description=Hugo Sub HTTP Service
@@ -115,7 +122,7 @@ SERVICEOF
     systemctl daemon-reload
     systemctl enable hugo-sub
     systemctl restart hugo-sub
-    echo "✅ 三订阅托管服务已启动！"
+    echo "✅ 自适应订阅托管服务及二维码生成支持已就绪！"
 }
 
 # 完全卸载/清理函数
@@ -163,7 +170,7 @@ install_nodes() {
     echo "==> 0. 检查并自动安装 sing-box 核心..."
     if ! command -v sing-box &> /dev/null; then
         echo "检测到系统未安装 sing-box，正在自动安装..."
-        apt-get update -y && apt-get install -y curl wget jq openssl python3
+        apt-get update -y && apt-get install -y curl wget jq openssl python3 qrencode
         bash <(curl -fsSL https://sing-box.app/deb-install.sh)
         echo "✅ sing-box 安装完成！"
     else
@@ -253,7 +260,6 @@ CONFIG
     systemctl enable sing-box
     systemctl restart sing-box
 
-    # 拼接节点链接
     VLESS_TCP="vless://$UUID@$IP:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$SNI&fp=chrome&pbk=$PUB_KEY&sid=$SHORT_ID&type=tcp#Hugo-Reality-TCP"
     VLESS_GP="vless://$UUID@$IP:444?encryption=none&security=reality&sni=$SNI&fp=chrome&pbk=$PUB_KEY&sid=$SHORT_ID&type=grpc&serviceName=hugogrpc#Hugo-Reality-gRPC"
     XTLS_EXTRA="vless://$UUID@$IP:8881?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$SNI&fp=chrome&pbk=$PUB_KEY&sid=$SHORT_ID&type=tcp#Hugo-XTLS-Reality-8881"
@@ -293,7 +299,6 @@ $SOCKS_LINK
 ============================================================
 LINKS
 
-    # 1. 生成 Base64 订阅文件 (/sub)
     RAW_SUBS="$VLESS_TCP
 $VLESS_GP
 $XTLS_EXTRA
@@ -304,7 +309,6 @@ $TROJAN_LINK
 $SOCKS_LINK"
     echo -n "$RAW_SUBS" | base64 | tr -d '\n' > "$SUB_FILE"
 
-    # 2. 生成 sing-box 客户端专用的完整 JSON 配置文件订阅 (/sing-box)
     cat > "$CLIENT_JSON" << CLIEOF
 {
   "log": { "level": "info" },
@@ -342,7 +346,6 @@ $SOCKS_LINK"
 }
 CLIEOF
 
-    # 3. 生成 Clash 专用的 YAML 配置文件订阅 (/clash)
     cat > "$CLASH_YAML" << CLASHEOF
 proxies:
   - name: "Hugo-Reality-TCP"
@@ -447,7 +450,7 @@ fi
 echo "============================================================"
 echo "          Hugo sing-box 多协议一键管理脚本                  "
 echo "============================================================"
-echo "  1. 查看当前节点信息及三订阅链接"
+echo "  1. 查看当前节点信息、自适应订阅链接及二维码"
 echo "  2. 全新部署 / 重置 8 大协议节点（生成新配置及订阅）"
 echo "  3. 彻底卸载 sing-box 及清除所有服务"
 echo "  0. 退出"
