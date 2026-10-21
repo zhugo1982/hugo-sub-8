@@ -1,4 +1,5 @@
 升级后
+```
 交互菜单
 ```
 bash <(curl -Ls https://raw.githubusercontent.com/zhugo1982/hugo-sub-8/main/sub.sh)
