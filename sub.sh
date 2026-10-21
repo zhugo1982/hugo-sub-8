@@ -9,7 +9,6 @@ fi
 LOG_FILE="/etc/sing-box/sub_links.txt"
 SUB_FILE="/etc/sing-box/sub_b64.txt"
 CLIENT_JSON="/etc/sing-box/client_config.json"
-CLASH_YAML="/etc/sing-box/clash_config.yaml"
 SUB_PORT=2082
 
 # 显示当前已保存节点及订阅信息的函数
@@ -25,26 +24,23 @@ show_nodes() {
         echo "🔗 1. 通用节点订阅 (V2rayN / Shadowrocket / v2rayNG 等):"
         echo "   http://$IP_ADDR:$SUB_PORT/sub"
         echo ""
-        echo "🔗 2. SFI / SFA / SFM 订阅 (Sing-box 专属 JSON):"
+        echo "🔗 2. SFI / SFA / SFM 原生客户端订阅 (Sing-box 专属 JSON):"
         echo "   http://$IP_ADDR:$SUB_PORT/sing-box"
-        echo ""
-        echo "🔗 3. Clash 订阅 (Clash Verge / MetaCubeX 专属 YAML):"
-        echo "   http://$IP_ADDR:$SUB_PORT/clash"
         echo "============================================================"
     else
         echo "❌ 未找到已保存的节点信息！请先运行全新部署。"
     fi
 }
 
-# 部署并启动轻量级 HTTP 三路由订阅托管服务
+# 部署并启动轻量级 HTTP 双路由订阅托管服务
 setup_sub_service() {
-    echo "==> 配置 HTTP 三订阅托管服务 (端口: $SUB_PORT)..."
+    echo "==> 配置 HTTP 订阅托管服务 (端口: $SUB_PORT)..."
     
     if ! command -v python3 &> /dev/null; then
         apt-get update -y && apt-get install -y python3 2>/dev/null || yum install -y python3 2>/dev/null
     fi
 
-    # 编写后台轻量 HTTP 订阅服务脚本（支持 /sub, /sing-box, /clash）
+    # 编写后台轻量 HTTP 订阅服务脚本（同时支持 /sub 和 /sing-box）
     cat > /etc/sing-box/sub_server.py << 'PYEOF'
 import http.server
 import socketserver
@@ -53,7 +49,6 @@ import os
 PORT = 2082
 SUB_B64 = "/etc/sing-box/sub_b64.txt"
 CLIENT_JSON = "/etc/sing-box/client_config.json"
-CLASH_YAML = "/etc/sing-box/clash_config.yaml"
 
 class SubHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
@@ -75,15 +70,6 @@ class SubHandler(http.server.SimpleHTTPRequestHandler):
                     self.wfile.write(f.read())
             else:
                 self.send_error(404, "Sing-box Client Config Not Found")
-        elif self.path == '/clash':
-            if os.path.exists(CLASH_YAML):
-                self.send_response(200)
-                self.send_header('Content-type', 'text/yaml; charset=utf-8')
-                self.end_headers()
-                with open(CLASH_YAML, 'rb') as f:
-                    self.wfile.write(f.read())
-            else:
-                self.send_error(404, "Clash Config Not Found")
         else:
             self.send_error(403, "Access Denied")
 
@@ -115,7 +101,7 @@ SERVICEOF
     systemctl daemon-reload
     systemctl enable hugo-sub
     systemctl restart hugo-sub
-    echo "✅ 三订阅托管服务已启动！"
+    echo "✅ 双模式订阅托管服务已启动！"
 }
 
 # 完全卸载/清理函数
@@ -310,120 +296,93 @@ $SOCKS_LINK"
   "log": { "level": "info" },
   "outbounds": [
     {
-      "type": "vless", "tag": "Hugo-Reality-TCP", "server": "$IP", "server_port": 443, "uuid": "$UUID", "flow": "xtls-rprx-vision", "packet_encoding": "xudp",
-      "tls": { "enabled": true, "server_name": "$SNI", "utls": { "enabled": true, "fingerprint": "chrome" }, "reality": { "enabled": true, "public_key": "$PUB_KEY", "short_id": "$SHORT_ID" } }
+      "type": "vless",
+      "tag": "Hugo-Reality-TCP",
+      "server": "$IP",
+      "server_port": 443,
+      "uuid": "$UUID",
+      "flow": "xtls-rprx-vision",
+      "packet_encoding": "xudp",
+      "tls": {
+        "enabled": true,
+        "server_name": "$SNI",
+        "utls": { "enabled": true, "fingerprint": "chrome" },
+        "reality": { "enabled": true, "public_key": "$PUB_KEY", "short_id": "$SHORT_ID" }
+      }
     },
     {
-      "type": "vless", "tag": "Hugo-Reality-gRPC", "server": "$IP", "server_port": 444, "uuid": "$UUID", "packet_encoding": "xudp",
-      "tls": { "enabled": true, "server_name": "$SNI", "utls": { "enabled": true, "fingerprint": "chrome" }, "reality": { "enabled": true, "public_key": "$PUB_KEY", "short_id": "$SHORT_ID" } },
+      "type": "vless",
+      "tag": "Hugo-Reality-gRPC",
+      "server": "$IP",
+      "server_port": 444,
+      "uuid": "$UUID",
+      "packet_encoding": "xudp",
+      "tls": {
+        "enabled": true,
+        "server_name": "$SNI",
+        "utls": { "enabled": true, "fingerprint": "chrome" },
+        "reality": { "enabled": true, "public_key": "$PUB_KEY", "short_id": "$SHORT_ID" }
+      },
       "transport": { "type": "grpc", "service_name": "hugogrpc" }
     },
     {
-      "type": "vless", "tag": "Hugo-XTLS-Reality-8881", "server": "$IP", "server_port": 8881, "uuid": "$UUID", "flow": "xtls-rprx-vision", "packet_encoding": "xudp",
-      "tls": { "enabled": true, "server_name": "$SNI", "utls": { "enabled": true, "fingerprint": "chrome" }, "reality": { "enabled": true, "public_key": "$PUB_KEY", "short_id": "$SHORT_ID" } }
+      "type": "vless",
+      "tag": "Hugo-XTLS-Reality-8881",
+      "server": "$IP",
+      "server_port": 8881,
+      "uuid": "$UUID",
+      "flow": "xtls-rprx-vision",
+      "packet_encoding": "xudp",
+      "tls": {
+        "enabled": true,
+        "server_name": "$SNI",
+        "utls": { "enabled": true, "fingerprint": "chrome" },
+        "reality": { "enabled": true, "public_key": "$PUB_KEY", "short_id": "$SHORT_ID" }
+      }
     },
     {
-      "type": "hysteria2", "tag": "Hugo-Hysteria2", "server": "$IP", "server_port": 8443, "up": "100 Mbps", "down": "100 Mbps", "password": "$HY2_PASS",
+      "type": "hysteria2",
+      "tag": "Hugo-Hysteria2",
+      "server": "$IP",
+      "server_port": 8443,
+      "up": "100 Mbps",
+      "down": "100 Mbps",
+      "password": "$HY2_PASS",
       "tls": { "enabled": true, "insecure": true, "alpn": ["h3"] }
     },
     {
-      "type": "tuic", "tag": "Hugo-TuicV5", "server": "$IP", "server_port": 9443, "uuid": "$UUID", "password": "$TUIC_PASS", "congestion_control": "bbr",
+      "type": "tuic",
+      "tag": "Hugo-TuicV5",
+      "server": "$IP",
+      "server_port": 9443,
+      "uuid": "$UUID",
+      "password": "$TUIC_PASS",
+      "congestion_control": "bbr",
       "tls": { "enabled": true, "insecure": true, "alpn": ["h3"] }
     },
     {
-      "type": "shadowsocks", "tag": "Hugo-Shadowsocks", "server": "$IP", "server_port": 6443, "method": "2022-blake3-aes-128-gcm", "password": "$SS_PASS"
+      "type": "shadowsocks",
+      "tag": "Hugo-Shadowsocks",
+      "server": "$IP",
+      "server_port": 6443,
+      "method": "2022-blake3-aes-128-gcm",
+      "password": "$SS_PASS"
     },
     {
-      "type": "trojan", "tag": "Hugo-Trojan", "server": "$IP", "server_port": 7443, "password": "$TROJAN_PASS",
+      "type": "trojan",
+      "tag": "Hugo-Trojan",
+      "server": "$IP",
+      "server_port": 7443,
+      "password": "$TROJAN_PASS",
       "tls": { "enabled": true, "insecure": true }
     },
-    { "type": "direct", "tag": "direct" }
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
   ]
 }
 CLIEOF
-
-    # 3. 生成 Clash 专用的 YAML 配置文件订阅 (/clash)
-    cat > "$CLASH_YAML" << CLASHEOF
-proxies:
-  - name: "Hugo-Reality-TCP"
-    type: vless
-    server: $IP
-    port: 443
-    uuid: $UUID
-    flow: xtls-rprx-vision
-    packet-encoding: xudp
-    tls: true
-    servername: $SNI
-    client-fingerprint: chrome
-    reality-opts:
-      public-key: $PUB_KEY
-      short-id: $SHORT_ID
-
-  - name: "Hugo-Reality-gRPC"
-    type: vless
-    server: $IP
-    port: 444
-    uuid: $UUID
-    packet-encoding: xudp
-    tls: true
-    servername: $SNI
-    client-fingerprint: chrome
-    network: grpc
-    grpc-opts:
-      grpc-service-name: hugogrpc
-    reality-opts:
-      public-key: $PUB_KEY
-      short-id: $SHORT_ID
-
-  - name: "Hugo-XTLS-Reality-8881"
-    type: vless
-    server: $IP
-    port: 8881
-    uuid: $UUID
-    flow: xtls-rprx-vision
-    packet-encoding: xudp
-    tls: true
-    servername: $SNI
-    client-fingerprint: chrome
-    reality-opts:
-      public-key: $PUB_KEY
-      short-id: $SHORT_ID
-
-  - name: "Hugo-Hysteria2"
-    type: hysteria2
-    server: $IP
-    port: 8443
-    password: $HY2_PASS
-    sni: bing.com
-    skip-cert-verify: true
-    up: 100
-    down: 100
-
-  - name: "Hugo-TuicV5"
-    type: tuic
-    server: $IP
-    port: 9443
-    uuid: $UUID
-    password: $TUIC_PASS
-    congestion_control: bbr
-    sni: bing.com
-    skip-cert-verify: true
-
-  - name: "Hugo-Shadowsocks"
-    type: shadowsocks
-    server: $IP
-    port: 6443
-    cipher: 2022-blake3-aes-128-gcm
-    password: $SS_PASS
-
-  - name: "Hugo-Trojan"
-    type: trojan
-    server: $IP
-    port: 7443
-    password: $TROJAN_PASS
-    sni: bing.com
-    skip-cert-verify: true
-CLASHEOF
 
     setup_sub_service
 
@@ -447,7 +406,7 @@ fi
 echo "============================================================"
 echo "          Hugo sing-box 多协议一键管理脚本                  "
 echo "============================================================"
-echo "  1. 查看当前节点信息及三订阅链接"
+echo "  1. 查看当前节点信息及双订阅链接"
 echo "  2. 全新部署 / 重置 8 大协议节点（生成新配置及订阅）"
 echo "  3. 彻底卸载 sing-box 及清除所有服务"
 echo "  0. 退出"
@@ -471,4 +430,4 @@ case "$CHOICE" in
         echo "❌ 无效输入，脚本已退出。"
         exit 1
         ;;
-esac
+es:
