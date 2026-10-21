@@ -36,12 +36,10 @@ show_nodes() {
 setup_sub_service() {
     echo "==> 配置 HTTP 双路由订阅托管服务 (端口: $SUB_PORT)..."
     
-    # 确保安装 python3
     if ! command -v python3 &> /dev/null; then
         apt-get update -y && apt-get install -y python3 2>/dev/null || yum install -y python3 2>/dev/null
     fi
 
-    # 编写后台轻量 HTTP 订阅服务脚本（同时支持 /sub 和 /sing-box）
     cat > /etc/sing-box/sub_server.py << 'PYEOF'
 import http.server
 import socketserver
@@ -83,7 +81,6 @@ if __name__ == "__main__":
         httpd.serve_forever()
 PYEOF
 
-    # 创建 systemd 开机自启服务
     cat > /etc/systemd/system/hugo-sub.service << SERVICEOF
 [Unit]
 Description=Hugo Sub HTTP Service
@@ -163,12 +160,10 @@ install_nodes() {
     echo "==> 2. 生成全新 8 协议凭证..."
     mkdir -p /etc/sing-box
 
-    # 生成 Reality 密钥
     KEYPAIR=$(sing-box generate reality-keypair)
     PRIV_KEY=$(echo "$KEYPAIR" | grep "PrivateKey" | awk '{print $2}')
     PUB_KEY=$(echo "$KEYPAIR" | grep "PublicKey" | awk '{print $2}')
 
-    # 生成通用凭证
     UUID=$(cat /proc/sys/kernel/random/uuid)
     HY2_PASS=$(cat /proc/sys/kernel/random/uuid | cut -d'-' -f1)
     TUIC_PASS=$(cat /proc/sys/kernel/random/uuid)
@@ -180,7 +175,6 @@ install_nodes() {
     SHORT_ID="0123456789abcdef"
     SNI="gateway.icloud.com"
 
-    # 获取公网 IP
     IP=$(curl -s https://api.ipify.org || curl -s https://ifconfig.me)
     if [ -z "$IP" ]; then
         IP="3.141.65.96"
@@ -368,14 +362,12 @@ install_nodes() {
 }
 CONFIG
 
-    # 生成 TLS 自签名证书
     openssl req -x509 -nodes -newkey rsa:2048 -keyout /etc/sing-box/hy2.key -out /etc/sing-box/hy2.crt -days 3650 -subj "/CN=bing.com" 2>/dev/null
 
     echo "==> 4. 重启 sing-box 服务..."
     systemctl enable sing-box
     systemctl restart sing-box
 
-    # 拼接节点链接
     VLESS_TCP="vless://$UUID@$IP:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$SNI&fp=chrome&pbk=$PUB_KEY&sid=$SHORT_ID&type=tcp#Hugo-Reality-TCP"
     VLESS_GP="vless://$UUID@$IP:444?encryption=none&security=reality&sni=$SNI&fp=chrome&pbk=$PUB_KEY&sid=$SHORT_ID&type=grpc&serviceName=hugogrpc#Hugo-Reality-gRPC"
     XTLS_EXTRA="vless://$UUID@$IP:8881?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$SNI&fp=chrome&pbk=$PUB_KEY&sid=$SHORT_ID&type=tcp#Hugo-XTLS-Reality-8881"
@@ -388,7 +380,6 @@ CONFIG
     SS_ENCODED=$(echo -n "$SS_RAW" | base64 | tr -d '\n')
     SS_LINK="ss://$SS_ENCODED@$IP:6443#Hugo-Shadowsocks"
 
-    # 持久化存储到明文文本
     cat > "$LOG_FILE" << LINKS
 [1] VLESS-Reality-TCP (443):
 $VLESS_TCP
@@ -416,7 +407,6 @@ $SOCKS_LINK
 ============================================================
 LINKS
 
-    # 1. 生成 Base64 订阅文件 (/sub)
     RAW_SUBS="$VLESS_TCP
 $VLESS_GP
 $XTLS_EXTRA
@@ -427,7 +417,7 @@ $TROJAN_LINK
 $SOCKS_LINK"
     echo -n "$RAW_SUBS" | base64 | tr -d '\n' > "$SUB_FILE"
 
-    # 2. 生成 sing-box 客户端专属的 JSON 配置文件 (/sing-box)
+    # 生成规范的 sing-box 客户端专属 JSON 配置 (已移除未知的 up/down 字段)
     cat > "$CLIENT_JSON" << CLIEOF
 {
   "log": { "level": "info" },
@@ -446,7 +436,7 @@ $SOCKS_LINK"
       "tls": { "enabled": true, "server_name": "$SNI", "utls": { "enabled": true, "fingerprint": "chrome" }, "reality": { "enabled": true, "public_key": "$PUB_KEY", "short_id": "$SHORT_ID" } }
     },
     {
-      "type": "hysteria2", "tag": "Hugo-Hysteria2", "server": "$IP", "server_port": 8443, "up": "100 Mbps", "down": "100 Mbps", "password": "$HY2_PASS",
+      "type": "hysteria2", "tag": "Hugo-Hysteria2", "server": "$IP", "server_port": 8443, "password": "$HY2_PASS",
       "tls": { "enabled": true, "insecure": true, "alpn": ["h3"] }
     },
     {
@@ -454,30 +444,17 @@ $SOCKS_LINK"
       "tls": { "enabled": true, "insecure": true, "alpn": ["h3"] }
     },
     {
-      "type": "shadowsocks",
-      "tag": "Hugo-Shadowsocks",
-      "server": "$IP",
-      "server_port": 6443,
-      "method": "2022-blake3-aes-128-gcm",
-      "password": "$SS_PASS"
+      "type": "shadowsocks", "tag": "Hugo-Shadowsocks", "server": "$IP", "server_port": 6443, "method": "2022-blake3-aes-128-gcm", "password": "$SS_PASS"
     },
     {
-      "type": "trojan",
-      "tag": "Hugo-Trojan",
-      "server": "$IP",
-      "server_port": 7443,
-      "password": "$TROJAN_PASS",
+      "type": "trojan", "tag": "Hugo-Trojan", "server": "$IP", "server_port": 7443, "password": "$TROJAN_PASS",
       "tls": { "enabled": true, "insecure": true }
     },
-    {
-      "type": "direct",
-      "tag": "direct"
-    }
+    { "type": "direct", "tag": "direct" }
   ]
 }
 CLIEOF
 
-    # 启动/配置 HTTP 订阅服务
     setup_sub_service
 
     echo "✅ 部署完成！"
