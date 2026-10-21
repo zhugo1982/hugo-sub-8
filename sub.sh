@@ -15,7 +15,7 @@ SUB_PORT=2082
 # 显示当前已保存节点及所有订阅信息的函数
 show_nodes() {
     if [ -f "$LOG_FILE" ]; then
-        IP_ADDR=$(curl -s https://api.ipify.org || curl -s https://ifconfig.me || echo "你的IP")
+        IP_ADDR=$(curl -s https://api.ipify.org || echo "你的IP")
         AUTO_URL="http://$IP_ADDR:$SUB_PORT/auto"
 
         echo "============================================================"
@@ -209,8 +209,7 @@ install_nodes() {
     SHORT_ID="0123456789abcdef"
     SNI="gateway.icloud.com"
 
-    # 多接口获取公网 IP，防止 AWS 等环境获取失败
-    IP=$(curl -s https://api.ipify.org || curl -s https://ifconfig.me || curl -s https://icanhazip.com)
+    IP=$(curl -s https://api.ipify.org)
     if [ -z "$IP" ]; then
         IP="3.141.65.96"
     fi
