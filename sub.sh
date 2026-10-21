@@ -20,6 +20,42 @@ show_nodes() {
     fi
 }
 
+# 完全卸载/清理函数
+uninstall_nodes() {
+    echo "============================================================"
+    echo "⚠️  警告：此操作将彻底卸载 sing-box 并删除所有节点配置！"
+    read -p "确定要彻底卸载吗？(y/N): " CONFIRM
+    case "$CONFIRM" in
+        [yY][eE][sS]|[yY])
+            echo "==> 1. 停止并禁用 sing-box 服务..."
+            systemctl stop sing-box 2>/dev/null
+            systemctl disable sing-box 2>/dev/null
+
+            echo "==> 2. 清理配置文件、秘钥与保存的节点链接..."
+            rm -rf /etc/sing-box
+
+            echo "==> 3. 卸载 sing-box 软件包..."
+            if command -v apt-get &> /dev/null; then
+                apt-get purge -y sing-box 2>/dev/null
+                apt-get autoremove -y 2>/dev/null
+            elif command -v yum &> /dev/null; then
+                yum remove -y sing-box 2>/dev/null
+            fi
+
+            echo "==> 4. 清理 sub 全局快捷键..."
+            rm -f /usr/local/bin/sub
+
+            echo "============================================================"
+            echo "✅ 卸载完成！所有服务、配置、快捷键及残留文件已全部彻底清理。"
+            echo "============================================================"
+            exit 0
+            ;;
+        *)
+            echo "❌ 操作已取消。"
+            ;;
+    esac
+}
+
 # 全新部署/重置节点的函数
 install_nodes() {
     echo "==> 0. 检查并自动安装 sing-box 核心..."
@@ -302,15 +338,21 @@ if [ "$1" == "install" ] || [ "$1" == "2" ]; then
     exit 0
 fi
 
+if [ "$1" == "uninstall" ] || [ "$1" == "3" ]; then
+    uninstall_nodes
+    exit 0
+fi
+
 # 交互菜单
 echo "============================================================"
 echo "          Hugo sing-box 多协议一键管理脚本                  "
 echo "============================================================"
 echo "  1. 查看当前节点信息（不清除/不更新现有节点）"
 echo "  2. 全新部署 / 重置 8 大协议节点（生成新配置）"
+echo "  3. 彻底卸载 sing-box 及清除所有节点配置"
 echo "  0. 退出"
 echo "============================================================"
-read -p "请输入数字选择 [0-2]: " CHOICE
+read -p "请输入数字选择 [0-3]: " CHOICE
 
 case "$CHOICE" in
     1)
@@ -318,6 +360,9 @@ case "$CHOICE" in
         ;;
     2)
         install_nodes
+        ;;
+    3)
+        uninstall_nodes
         ;;
     0)
         exit 0
