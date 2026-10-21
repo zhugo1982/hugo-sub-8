@@ -7,32 +7,106 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 LOG_FILE="/etc/sing-box/sub_links.txt"
+SUB_FILE="/etc/sing-box/sub_b64.txt"
+SUB_PORT=2082
 
-# 显示当前已保存节点的函数
+# 显示当前已保存节点及订阅信息的函数
 show_nodes() {
     if [ -f "$LOG_FILE" ]; then
         echo "============================================================"
         echo "✨ 当前服务器已生成的 8 大协议节点信息如下："
         echo "============================================================"
         cat "$LOG_FILE"
+        echo ""
+        echo "============================================================"
+        echo "🔗 网页订阅链接 (可在 V2rayN / Shadowrocket / v2rayNG 等直接添加):"
+        echo "   http://$(curl -s https://api.ipify.org || echo "你的IP"):$SUB_PORT/sub"
+        echo "============================================================"
     else
         echo "❌ 未找到已保存的节点信息！请先运行全新部署。"
     fi
 }
 
+# 部署并启动轻量级 HTTP 订阅托管服务
+setup_sub_service() {
+    echo "==> 配置 HTTP 订阅托管服务 (端口: $SUB_PORT)..."
+    
+    # 确保安装 python3
+    if ! command -v python3 &> /dev/null; then
+        apt-get update -y && apt-get install -y python3 2>/dev/null || yum install -y python3 2>/dev/null
+    fi
+
+    # 编写后台轻量 HTTP 订阅服务脚本
+    cat > /etc/sing-box/sub_server.py << 'PYEOF'
+import http.server
+import socketserver
+import os
+
+PORT = 2082
+FILE_PATH = "/etc/sing-box/sub_b64.txt"
+
+class SubHandler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/sub':
+            if os.path.exists(FILE_PATH):
+                self.send_response(200)
+                self.send_header('Content-type', 'text/plain; charset=utf-8')
+                self.end_headers()
+                with open(FILE_PATH, 'rb') as f:
+                    self.wfile.write(f.read())
+            else:
+                self.send_error(404, "Subscription File Not Found")
+        else:
+            self.send_error(403, "Access Denied")
+
+    def log_message(self, format, *args):
+        return
+
+if __name__ == "__main__":
+    socketserver.TCPServer.allow_reuse_address = True
+    with socketserver.TCPServer(("", PORT), SubHandler) as httpd:
+        httpd.serve_forever()
+PYEOF
+
+    # 创建 systemd 开机自启服务
+    cat > /etc/systemd/system/hugo-sub.service << SERVICEOF
+[Unit]
+Description=Hugo Sub HTTP Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /etc/sing-box/sub_server.py
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
+SERVICEOF
+
+    systemctl daemon-reload
+    systemctl enable hugo-sub
+    systemctl restart hugo-sub
+    echo "✅ 订阅托管服务已启动！"
+}
+
 # 完全卸载/清理函数
 uninstall_nodes() {
     echo "============================================================"
-    echo "⚠️  警告：此操作将彻底卸载 sing-box 并删除所有节点配置！"
+    echo "⚠️  警告：此操作将彻底卸载 sing-box、订阅服务并删除所有节点配置！"
     read -p "确定要彻底卸载吗？(y/N): " CONFIRM
     case "$CONFIRM" in
         [yY][eE][sS]|[yY])
-            echo "==> 1. 停止并禁用 sing-box 服务..."
+            echo "==> 1. 停止并禁用服务..."
             systemctl stop sing-box 2>/dev/null
             systemctl disable sing-box 2>/dev/null
+            systemctl stop hugo-sub 2>/dev/null
+            systemctl disable hugo-sub 2>/dev/null
 
-            echo "==> 2. 清理配置文件、秘钥与保存的节点链接..."
+            echo "==> 2. 清理配置文件与订阅开机项..."
             rm -rf /etc/sing-box
+            rm -f /etc/systemd/system/hugo-sub.service
+            systemctl daemon-reload
 
             echo "==> 3. 卸载 sing-box 软件包..."
             if command -v apt-get &> /dev/null; then
@@ -46,7 +120,7 @@ uninstall_nodes() {
             rm -f /usr/local/bin/sub
 
             echo "============================================================"
-            echo "✅ 卸载完成！所有服务、配置、快捷键及残留文件已全部彻底清理。"
+            echo "✅ 卸载完成！所有节点、订阅 HTTP 服务及残留文件已彻底清理。"
             echo "============================================================"
             exit 0
             ;;
@@ -61,7 +135,7 @@ install_nodes() {
     echo "==> 0. 检查并自动安装 sing-box 核心..."
     if ! command -v sing-box &> /dev/null; then
         echo "检测到系统未安装 sing-box，正在自动安装..."
-        apt-get update -y && apt-get install -y curl wget jq openssl
+        apt-get update -y && apt-get install -y curl wget jq openssl python3
         bash <(curl -fsSL https://sing-box.app/deb-install.sh)
         echo "✅ sing-box 安装完成！"
     else
@@ -299,7 +373,7 @@ CONFIG
     SS_ENCODED=$(echo -n "$SS_RAW" | base64 | tr -d '\n')
     SS_LINK="ss://$SS_ENCODED@$IP:6443#Hugo-Shadowsocks"
 
-    # 持久化存储到本地文本
+    # 持久化存储到明文文本
     cat > "$LOG_FILE" << LINKS
 [1] VLESS-Reality-TCP (443):
 $VLESS_TCP
@@ -327,7 +401,22 @@ $SOCKS_LINK
 ============================================================
 LINKS
 
-    echo "✅ 部署完成！节点已保存至 $LOG_FILE"
+    # 生成 Base64 订阅文件
+    RAW_SUBS="$VLESS_TCP
+$VLESS_GP
+$XTLS_EXTRA
+$HY2_LINK
+$TUIC_LINK
+$SS_LINK
+$TROJAN_LINK
+$SOCKS_LINK"
+    
+    echo -n "$RAW_SUBS" | base64 | tr -d '\n' > "$SUB_FILE"
+
+    # 启动/配置 HTTP 订阅服务
+    setup_sub_service
+
+    echo "✅ 部署完成！"
     echo ""
     show_nodes
 }
@@ -347,9 +436,9 @@ fi
 echo "============================================================"
 echo "          Hugo sing-box 多协议一键管理脚本                  "
 echo "============================================================"
-echo "  1. 查看当前节点信息（不清除/不更新现有节点）"
-echo "  2. 全新部署 / 重置 8 大协议节点（生成新配置）"
-echo "  3. 彻底卸载 sing-box 及清除所有节点配置"
+echo "  1. 查看当前节点信息及订阅链接"
+echo "  2. 全新部署 / 重置 8 大协议节点（生成新配置及订阅）"
+echo "  3. 彻底卸载 sing-box 及清除所有服务"
 echo "  0. 退出"
 echo "============================================================"
 read -p "请输入数字选择 [0-3]: " CHOICE
