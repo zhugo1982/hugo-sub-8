@@ -8,7 +8,6 @@ fi
 
 LOG_FILE="/etc/sing-box/sub_links.txt"
 SUB_FILE="/etc/sing-box/sub_b64.txt"
-CLIENT_JSON="/etc/sing-box/sub/client_config.json"
 SUB_PORT=2082
 
 # 显示当前已保存节点及双订阅信息的函数
@@ -32,23 +31,24 @@ show_nodes() {
     fi
 }
 
-# 部署并启动双路由轻量级 HTTP 订阅托管服务
+# 部署并启动双路由轻量级动态 HTTP 订阅托管服务
 setup_sub_service() {
-    echo "==> 配置 HTTP 双路由订阅托管服务 (端口: $SUB_PORT)..."
+    echo "==> 配置 HTTP 双路由动态订阅托管服务 (端口: $SUB_PORT)..."
     
     if ! command -v python3 &> /dev/null; then
         apt-get update -y && apt-get install -y python3 2>/dev/null || yum install -y python3 2>/dev/null
     fi
 
-    # 编写后台轻量 HTTP 订阅服务脚本
+    # 编写后台动态 HTTP 订阅服务脚本（将参数动态填入 sing-box 客户端 JSON 模板中）
     cat > /etc/sing-box/sub_server.py << 'PYEOF'
 import http.server
 import socketserver
 import os
+import json
 
 PORT = 2082
 SUB_B64 = "/etc/sing-box/sub_b64.txt"
-CLIENT_JSON = "/etc/sing-box/sub/client_config.json"
+CRED_FILE = "/etc/sing-box/creds.json"
 
 class SubHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
@@ -62,14 +62,56 @@ class SubHandler(http.server.SimpleHTTPRequestHandler):
             else:
                 self.send_error(404, "Subscription File Not Found")
         elif self.path == '/sing-box':
-            if os.path.exists(CLIENT_JSON):
-                self.send_response(200)
-                self.send_header('Content-type', 'application/json; charset=utf-8')
-                self.end_headers()
-                with open(CLIENT_JSON, 'rb') as f:
-                    self.wfile.write(f.read())
+            if os.path.exists(CRED_FILE):
+                try:
+                    with open(CRED_FILE, 'r') as f:
+                        c = json.load(f)
+                    
+                    # 动态生成标准的 sing-box 客户端 JSON
+                    client_config = {
+                      "log": { "level": "info" },
+                      "outbounds": [
+                        {
+                          "type": "vless", "tag": "Hugo-Reality-TCP", "server": c["ip"], "server_port": 443, "uuid": c["uuid"], "flow": "xtls-rprx-vision", "packet_encoding": "xudp",
+                          "tls": { "enabled": True, "server_name": c["sni"], "utls": { "enabled": True, "fingerprint": "chrome" }, "reality": { "enabled": True, "public_key": c["pub_key"], "short_id": c["short_id"] } }
+                        },
+                        {
+                          "type": "vless", "tag": "Hugo-Reality-gRPC", "server": c["ip"], "server_port": 444, "uuid": c["uuid"], "packet_encoding": "xudp",
+                          "tls": { "enabled": True, "server_name": c["sni"], "utls": { "enabled": True, "fingerprint": "chrome" }, "reality": { "enabled": True, "public_key": c["pub_key"], "short_id": c["short_id"] } },
+                          "transport": { "type": "grpc", "service_name": "hugogrpc" }
+                        },
+                        {
+                          "type": "vless", "tag": "Hugo-XTLS-Reality-8881", "server": c["ip"], "server_port": 8881, "uuid": c["uuid"], "flow": "xtls-rprx-vision", "packet_encoding": "xudp",
+                          "tls": { "enabled": True, "server_name": c["sni"], "utls": { "enabled": True, "fingerprint": "chrome" }, "reality": { "enabled": True, "public_key": c["pub_key"], "short_id": c["short_id"] } }
+                        },
+                        {
+                          "type": "hysteria2", "tag": "Hugo-Hysteria2", "server": c["ip"], "server_port": 8443, "password": c["hy2_pass"],
+                          "tls": { "enabled": True, "insecure": True, "alpn": ["h3"] }
+                        },
+                        {
+                          "type": "tuic", "tag": "Hugo-TuicV5", "server": c["ip"], "server_port": 9443, "uuid": c["uuid"], "password": c["tuic_pass"], "congestion_control": "bbr",
+                          "tls": { "enabled": True, "insecure": True, "alpn": ["h3"] }
+                        },
+                        {
+                          "type": "shadowsocks", "tag": "Hugo-Shadowsocks", "server": c["ip"], "server_port": 6443, "method": "2022-blake3-aes-128-gcm", "password": c["ss_pass"]
+                        },
+                        {
+                          "type": "trojan", "tag": "Hugo-Trojan", "server": c["ip"], "server_port": 7443, "password": c["trojan_pass"],
+                          "tls": { "enabled": True, "insecure": True }
+                        },
+                        { "type": "direct", "tag": "direct" }
+                      ]
+                    }
+                    
+                    response_data = json.dumps(client_config, indent=2).encode('utf-8')
+                    self.send_response(200)
+                    self.send_header('Content-type', 'application/json; charset=utf-8')
+                    self.end_headers()
+                    self.wfile.write(response_data)
+                except Exception as e:
+                    self.send_error(500, f"Internal Error: {str(e)}")
             else:
-                self.send_error(404, "Sing-box Client Config Not Found")
+                self.send_error(404, "Credentials Not Found")
         else:
             self.send_error(403, "Access Denied")
 
@@ -100,7 +142,7 @@ SERVICEOF
     systemctl daemon-reload
     systemctl enable hugo-sub
     systemctl restart hugo-sub
-    echo "✅ 双路由订阅托管服务已启动！"
+    echo "✅ 动态双路由订阅托管服务已启动！"
 }
 
 # 完全卸载/清理函数
@@ -159,7 +201,6 @@ install_nodes() {
     systemctl stop sing-box 2>/dev/null
     rm -rf /etc/sing-box
     mkdir -p /etc/sing-box
-    mkdir -p /etc/sing-box/sub
 
     echo "==> 2. 生成全新 8 协议凭证..."
     KEYPAIR=$(sing-box generate reality-keypair)
@@ -420,43 +461,20 @@ $TROJAN_LINK
 $SOCKS_LINK"
     echo -n "$RAW_SUBS" | base64 | tr -d '\n' > "$SUB_FILE"
 
-    # 2. 生成 sing-box 客户端专属 JSON 配置文件（存放在安全的独立子目录中，不干扰服务端核心）
-    cat > "$CLIENT_JSON" << CLIEOF
+    # 2. 保存凭证供动态 /sing-box 接口实时渲染使用
+    cat > /etc/sing-box/creds.json << CREDEOF
 {
-  "log": { "level": "info" },
-  "outbounds": [
-    {
-      "type": "vless", "tag": "Hugo-Reality-TCP", "server": "$IP", "server_port": 443, "uuid": "$UUID", "flow": "xtls-rprx-vision", "packet_encoding": "xudp",
-      "tls": { "enabled": true, "server_name": "$SNI", "utls": { "enabled": true, "fingerprint": "chrome" }, "reality": { "enabled": true, "public_key": "$PUB_KEY", "short_id": "$SHORT_ID" } }
-    },
-    {
-      "type": "vless", "tag": "Hugo-Reality-gRPC", "server": "$IP", "server_port": 444, "uuid": "$UUID", "packet_encoding": "xudp",
-      "tls": { "enabled": true, "server_name": "$SNI", "utls": { "enabled": true, "fingerprint": "chrome" }, "reality": { "enabled": true, "public_key": "$PUB_KEY", "short_id": "$SHORT_ID" } },
-      "transport": { "type": "grpc", "service_name": "hugogrpc" }
-    },
-    {
-      "type": "vless", "tag": "Hugo-XTLS-Reality-8881", "server": "$IP", "server_port": 8881, "uuid": "$UUID", "flow": "xtls-rprx-vision", "packet_encoding": "xudp",
-      "tls": { "enabled": true, "server_name": "$SNI", "utls": { "enabled": true, "fingerprint": "chrome" }, "reality": { "enabled": true, "public_key": "$PUB_KEY", "short_id": "$SHORT_ID" } }
-    },
-    {
-      "type": "hysteria2", "tag": "Hugo-Hysteria2", "server": "$IP", "server_port": 8443, "password": "$HY2_PASS",
-      "tls": { "enabled": true, "insecure": true, "alpn": ["h3"] }
-    },
-    {
-      "type": "tuic", "tag": "Hugo-TuicV5", "server": "$IP", "server_port": 9443, "uuid": "$UUID", "password": "$TUIC_PASS", "congestion_control": "bbr",
-      "tls": { "enabled": true, "insecure": true, "alpn": ["h3"] }
-    },
-    {
-      "type": "shadowsocks", "tag": "Hugo-Shadowsocks", "server": "$IP", "server_port": 6443, "method": "2022-blake3-aes-128-gcm", "password": "$SS_PASS"
-    },
-    {
-      "type": "trojan", "tag": "Hugo-Trojan", "server": "$IP", "server_port": 7443, "password": "$TROJAN_PASS",
-      "tls": { "enabled": true, "insecure": true }
-    },
-    { "type": "direct", "tag": "direct" }
-  ]
+  "ip": "$IP",
+  "uuid": "$UUID",
+  "pub_key": "$PUB_KEY",
+  "short_id": "$SHORT_ID",
+  "sni": "$SNI",
+  "hy2_pass": "$HY2_PASS",
+  "tuic_pass": "$TUIC_PASS",
+  "ss_pass": "$SS_PASS",
+  "trojan_pass": "$TROJAN_PASS"
 }
-CLIEOF
+CREDEOF
 
     setup_sub_service
 
