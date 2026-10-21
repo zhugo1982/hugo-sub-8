@@ -12,7 +12,7 @@ CLIENT_JSON="/etc/sing-box/client_config.json"
 CLASH_YAML="/etc/sing-box/clash_config.yaml"
 SUB_PORT=2082
 
-# 显示当前已保存节点及订阅信息的函数（带自动二维码）
+# 显示当前已保存节点及所有订阅信息的函数
 show_nodes() {
     if [ -f "$LOG_FILE" ]; then
         IP_ADDR=$(curl -s https://api.ipify.org || echo "你的IP")
@@ -24,17 +24,26 @@ show_nodes() {
         cat "$LOG_FILE"
         echo ""
         echo "============================================================"
-        echo "🔗 智能自适应订阅链接 (支持 Clash / V2rayN / Throne / 小火箭 / SFI):"
+        echo "🔗 1. 通用节点订阅 (V2rayN / Shadowrocket / v2rayNG 等):"
+        echo "   http://$IP_ADDR:$SUB_PORT/sub"
+        echo ""
+        echo "🔗 2. SFI / SFA / SFM 订阅 (Sing-box 专属 JSON):"
+        echo "   http://$IP_ADDR:$SUB_PORT/sing-box"
+        echo ""
+        echo "🔗 3. Clash 订阅 (Clash Verge / MetaCubeX 专属 YAML):"
+        echo "   http://$IP_ADDR:$SUB_PORT/clash"
+        echo ""
+        echo "🔗 4. 智能自适应订阅 (自动识别客户端类型分发):"
         echo "   $AUTO_URL"
         echo "============================================================"
         
-        # 检查并生成二维码
+        # 检查并生成自适应链接的二维码
         if ! command -v qrencode &> /dev/null; then
             apt-get update -y && apt-get install -y qrencode 2>/dev/null || yum install -y qrencode 2>/dev/null
         fi
 
         if command -v qrencode &> /dev/null; then
-            echo "📱 请使用手机客户端（Shadowrocket / SFI / SFA 等）扫描下方二维码导入订阅："
+            echo "📱 智能自适应订阅二维码（扫码自动适配对应客户端）："
             echo ""
             qrencode -t ANSIUTF8 "$AUTO_URL"
         else
@@ -46,15 +55,15 @@ show_nodes() {
     fi
 }
 
-# 部署并启动轻量级 HTTP 自适应订阅托管服务
+# 部署并启动轻量级 HTTP 多路由订阅托管服务
 setup_sub_service() {
-    echo "==> 配置 HTTP 自适应订阅托管服务 (端口: $SUB_PORT)..."
+    echo "==> 配置 HTTP 多路由订阅托管服务 (端口: $SUB_PORT)..."
     
     if ! command -v python3 &> /dev/null; then
         apt-get update -y && apt-get install -y python3 2>/dev/null || yum install -y python3 2>/dev/null
     fi
 
-    # 编写后台轻量 HTTP 订阅服务脚本（支持智能 UA 识别与自适应分发）
+    # 编写后台轻量 HTTP 订阅服务脚本（同时支持 /sub, /sing-box, /clash, /auto）
     cat > /etc/sing-box/sub_server.py << 'PYEOF'
 import http.server
 import socketserver
@@ -75,7 +84,8 @@ class SubHandler(http.server.SimpleHTTPRequestHandler):
             self.send_file(CLIENT_JSON, 'application/json; charset=utf-8')
         elif self.path == '/clash':
             self.send_file(CLASH_YAML, 'text/yaml; charset=utf-8')
-        elif self.path == '/auto':
+        elif self.path in ['/auto', '/auto2']:
+            # 智能 UA 识别自适应分发
             if any(k in ua for k in ['clash', 'meta', 'verge', 'nyanpasu']):
                 self.send_file(CLASH_YAML, 'text/yaml; charset=utf-8')
             elif any(k in ua for k in ['sing-box', 'sfi', 'sfa', 'sfm']):
@@ -122,7 +132,7 @@ SERVICEOF
     systemctl daemon-reload
     systemctl enable hugo-sub
     systemctl restart hugo-sub
-    echo "✅ 自适应订阅托管服务及二维码生成支持已就绪！"
+    echo "✅ 多路由订阅托管服务已启动！"
 }
 
 # 完全卸载/清理函数
@@ -450,7 +460,7 @@ fi
 echo "============================================================"
 echo "          Hugo sing-box 多协议一键管理脚本                  "
 echo "============================================================"
-echo "  1. 查看当前节点信息、自适应订阅链接及二维码"
+echo "  1. 查看当前节点信息、专属订阅及自适应二维码"
 echo "  2. 全新部署 / 重置 8 大协议节点（生成新配置及订阅）"
 echo "  3. 彻底卸载 sing-box 及清除所有服务"
 echo "  0. 退出"
