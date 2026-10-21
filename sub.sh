@@ -22,28 +22,29 @@ show_nodes() {
         cat "$LOG_FILE"
         echo ""
         echo "============================================================"
-        echo "🔗 智能自适应订阅 (自动识别 Clash / V2rayN / Throne / Shadowrocket / SFI):"
-        echo "   http://$IP_ADDR:$SUB_PORT/auto"
+        echo "🔗 1. 通用节点订阅 (V2rayN / Shadowrocket / v2rayNG 等):"
+        echo "   http://$IP_ADDR:$SUB_PORT/sub"
         echo ""
-        echo "🔗 各端专属订阅接口 (可选):"
-        echo "   - 通用 Base64: http://$IP_ADDR:$SUB_PORT/sub"
-        echo "   - Sing-box JSON: http://$IP_ADDR:$SUB_PORT/sing-box"
-        echo "   - Clash YAML:  http://$IP_ADDR:$SUB_PORT/clash"
+        echo "🔗 2. SFI / SFA / SFM 订阅 (Sing-box 专属 JSON):"
+        echo "   http://$IP_ADDR:$SUB_PORT/sing-box"
+        echo ""
+        echo "🔗 3. Clash 订阅 (Clash Verge / MetaCubeX 专属 YAML):"
+        echo "   http://$IP_ADDR:$SUB_PORT/clash"
         echo "============================================================"
     else
         echo "❌ 未找到已保存的节点信息！请先运行全新部署。"
     fi
 }
 
-# 部署并启动轻量级 HTTP 自适应订阅托管服务
+# 部署并启动轻量级 HTTP 三路由订阅托管服务
 setup_sub_service() {
-    echo "==> 配置 HTTP 自适应订阅托管服务 (端口: $SUB_PORT)..."
+    echo "==> 配置 HTTP 三订阅托管服务 (端口: $SUB_PORT)..."
     
     if ! command -v python3 &> /dev/null; then
         apt-get update -y && apt-get install -y python3 2>/dev/null || yum install -y python3 2>/dev/null
     fi
 
-    # 编写后台轻量 HTTP 订阅服务脚本（支持智能 UA 识别与自适应分发）
+    # 编写后台轻量 HTTP 订阅服务脚本（支持 /sub, /sing-box, /clash）
     cat > /etc/sing-box/sub_server.py << 'PYEOF'
 import http.server
 import socketserver
@@ -56,36 +57,35 @@ CLASH_YAML = "/etc/sing-box/clash_config.yaml"
 
 class SubHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
-        ua = self.headers.get('User-Agent', '').lower()
-        
-        # 显式路径匹配
         if self.path == '/sub':
-            self.send_file(SUB_B64, 'text/plain; charset=utf-8')
-        elif self.path == '/sing-box':
-            self.send_file(CLIENT_JSON, 'application/json; charset=utf-8')
-        elif self.path == '/clash':
-            self.send_file(CLASH_YAML, 'text/yaml; charset=utf-8')
-        elif self.path == '/auto':
-            # 智能 UA 识别自适应分发
-            if any(k in ua for k in ['clash', 'meta', 'verge', 'nyanpasu']):
-                self.send_file(CLASH_YAML, 'text/yaml; charset=utf-8')
-            elif any(k in ua for k in ['sing-box', 'sfi', 'sfa', 'sfm']):
-                self.send_file(CLIENT_JSON, 'application/json; charset=utf-8')
+            if os.path.exists(SUB_B64):
+                self.send_response(200)
+                self.send_header('Content-type', 'text/plain; charset=utf-8')
+                self.end_headers()
+                with open(SUB_B64, 'rb') as f:
+                    self.wfile.write(f.read())
             else:
-                # 默认返回通用 Base64 (适配 V2rayN, Shadowrocket, Throne 等)
-                self.send_file(SUB_B64, 'text/plain; charset=utf-8')
+                self.send_error(404, "Subscription File Not Found")
+        elif self.path == '/sing-box':
+            if os.path.exists(CLIENT_JSON):
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json; charset=utf-8')
+                self.end_headers()
+                with open(CLIENT_JSON, 'rb') as f:
+                    self.wfile.write(f.read())
+            else:
+                self.send_error(404, "Sing-box Client Config Not Found")
+        elif self.path == '/clash':
+            if os.path.exists(CLASH_YAML):
+                self.send_response(200)
+                self.send_header('Content-type', 'text/yaml; charset=utf-8')
+                self.end_headers()
+                with open(CLASH_YAML, 'rb') as f:
+                    self.wfile.write(f.read())
+            else:
+                self.send_error(404, "Clash Config Not Found")
         else:
             self.send_error(403, "Access Denied")
-
-    def send_file(self, filepath, content_type):
-        if os.path.exists(filepath):
-            self.send_response(200)
-            self.send_header('Content-type', content_type)
-            self.end_headers()
-            with open(filepath, 'rb') as f:
-                self.wfile.write(f.read())
-        else:
-            self.send_error(404, "Subscription File Not Found")
 
     def log_message(self, format, *args):
         return
@@ -115,7 +115,7 @@ SERVICEOF
     systemctl daemon-reload
     systemctl enable hugo-sub
     systemctl restart hugo-sub
-    echo "✅ 自适应订阅托管服务已启动！"
+    echo "✅ 三订阅托管服务已启动！"
 }
 
 # 完全卸载/清理函数
@@ -293,7 +293,7 @@ $SOCKS_LINK
 ============================================================
 LINKS
 
-    # 1. 生成 Base64 订阅文件
+    # 1. 生成 Base64 订阅文件 (/sub)
     RAW_SUBS="$VLESS_TCP
 $VLESS_GP
 $XTLS_EXTRA
@@ -304,7 +304,7 @@ $TROJAN_LINK
 $SOCKS_LINK"
     echo -n "$RAW_SUBS" | base64 | tr -d '\n' > "$SUB_FILE"
 
-    # 2. 生成 sing-box 客户端专用的 JSON 配置
+    # 2. 生成 sing-box 客户端专用的完整 JSON 配置文件订阅 (/sing-box)
     cat > "$CLIENT_JSON" << CLIEOF
 {
   "log": { "level": "info" },
@@ -342,7 +342,7 @@ $SOCKS_LINK"
 }
 CLIEOF
 
-    # 3. 生成 Clash 专用的 YAML 配置
+    # 3. 生成 Clash 专用的 YAML 配置文件订阅 (/clash)
     cat > "$CLASH_YAML" << CLASHEOF
 proxies:
   - name: "Hugo-Reality-TCP"
@@ -447,7 +447,7 @@ fi
 echo "============================================================"
 echo "          Hugo sing-box 多协议一键管理脚本                  "
 echo "============================================================"
-echo "  1. 查看当前节点信息及自适应订阅链接"
+echo "  1. 查看当前节点信息及三订阅链接"
 echo "  2. 全新部署 / 重置 8 大协议节点（生成新配置及订阅）"
 echo "  3. 彻底卸载 sing-box 及清除所有服务"
 echo "  0. 退出"
