@@ -8,7 +8,7 @@ fi
 
 LOG_FILE="/etc/sing-box/sub_links.txt"
 SUB_FILE="/etc/sing-box/sub_b64.txt"
-CLIENT_JSON="/etc/sing-box/client_config.json"
+CLIENT_JSON="/etc/sing-box/sub/client_config.json"
 SUB_PORT=2082
 
 # 显示当前已保存节点及双订阅信息的函数
@@ -40,7 +40,7 @@ setup_sub_service() {
         apt-get update -y && apt-get install -y python3 2>/dev/null || yum install -y python3 2>/dev/null
     fi
 
-    # 编写后台轻量 HTTP 订阅服务脚本（同时独立托管 /sub 和 /sing-box）
+    # 编写后台轻量 HTTP 订阅服务脚本
     cat > /etc/sing-box/sub_server.py << 'PYEOF'
 import http.server
 import socketserver
@@ -48,7 +48,7 @@ import os
 
 PORT = 2082
 SUB_B64 = "/etc/sing-box/sub_b64.txt"
-CLIENT_JSON = "/etc/sing-box/client_config.json"
+CLIENT_JSON = "/etc/sing-box/sub/client_config.json"
 
 class SubHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
@@ -82,7 +82,6 @@ if __name__ == "__main__":
         httpd.serve_forever()
 PYEOF
 
-    # 创建 systemd 开机自启服务
     cat > /etc/systemd/system/hugo-sub.service << SERVICEOF
 [Unit]
 Description=Hugo Sub HTTP Service
@@ -160,6 +159,7 @@ install_nodes() {
     systemctl stop sing-box 2>/dev/null
     rm -rf /etc/sing-box
     mkdir -p /etc/sing-box
+    mkdir -p /etc/sing-box/sub
 
     echo "==> 2. 生成全新 8 协议凭证..."
     KEYPAIR=$(sing-box generate reality-keypair)
@@ -420,7 +420,7 @@ $TROJAN_LINK
 $SOCKS_LINK"
     echo -n "$RAW_SUBS" | base64 | tr -d '\n' > "$SUB_FILE"
 
-    # 2. 生成 sing-box 客户端专属 JSON 配置文件 (/sing-box)
+    # 2. 生成 sing-box 客户端专属 JSON 配置文件（存放在安全的独立子目录中，不干扰服务端核心）
     cat > "$CLIENT_JSON" << CLIEOF
 {
   "log": { "level": "info" },
