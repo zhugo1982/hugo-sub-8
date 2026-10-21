@@ -24,17 +24,19 @@ show_nodes() {
         cat "$LOG_FILE"
         echo ""
         echo "============================================================"
-        echo "🔗 1. 通用节点订阅 (V2rayN / Shadowrocket / v2rayNG 等):"
-        echo "   http://$IP_ADDR:$SUB_PORT/sub"
+        echo "🔗 全部订阅链接汇总 (专属接口 + 智能自适应):"
+        echo "============================================================"
+        echo "  1. 通用节点订阅 (V2rayN / 小火箭 / v2rayNG 等):"
+        echo "     http://$IP_ADDR:$SUB_PORT/sub"
         echo ""
-        echo "🔗 2. SFI / SFA / SFM 订阅 (Sing-box 专属 JSON):"
-        echo "   http://$IP_ADDR:$SUB_PORT/sing-box"
+        echo "  2. SFI / SFA / SFM 专属订阅 (Sing-box JSON):"
+        echo "     http://$IP_ADDR:$SUB_PORT/sing-box"
         echo ""
-        echo "🔗 3. Clash 订阅 (Clash Verge / MetaCubeX 专属 YAML):"
-        echo "   http://$IP_ADDR:$SUB_PORT/clash"
+        echo "  3. Clash 专属订阅 (Clash Verge / MetaCubeX YAML):"
+        echo "     http://$IP_ADDR:$SUB_PORT/clash"
         echo ""
-        echo "🔗 4. 智能自适应订阅 (自动识别客户端类型分发):"
-        echo "   $AUTO_URL"
+        echo "  4. 智能自适应订阅 (自动识别客户端分发):"
+        echo "     $AUTO_URL"
         echo "============================================================"
         
         # 检查并生成自适应链接的二维码
@@ -85,7 +87,6 @@ class SubHandler(http.server.SimpleHTTPRequestHandler):
         elif self.path == '/clash':
             self.send_file(CLASH_YAML, 'text/yaml; charset=utf-8')
         elif self.path in ['/auto', '/auto2']:
-            # 智能 UA 识别自适应分发
             if any(k in ua for k in ['clash', 'meta', 'verge', 'nyanpasu']):
                 self.send_file(CLASH_YAML, 'text/yaml; charset=utf-8')
             elif any(k in ua for k in ['sing-box', 'sfi', 'sfa', 'sfm']):
@@ -460,7 +461,7 @@ fi
 echo "============================================================"
 echo "          Hugo sing-box 多协议一键管理脚本                  "
 echo "============================================================"
-echo "  1. 查看当前节点信息、专属订阅及自适应二维码"
+echo "  1. 查看当前节点信息、全部订阅链接及二维码"
 echo "  2. 全新部署 / 重置 8 大协议节点（生成新配置及订阅）"
 echo "  3. 彻底卸载 sing-box 及清除所有服务"
 echo "  0. 退出"
