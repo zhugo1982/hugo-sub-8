@@ -263,7 +263,7 @@ CONFIG
     SS_ENCODED=$(echo -n "$SS_RAW" | base64 | tr -d '\n')
     SS_LINK="ss://$SS_ENCODED@$IP:6443#Hugo-Shadowsocks"
 
-    # 将生成的节点信息持久化存储到本地文本中
+    # 持久化存储到本地文本
     cat > "$LOG_FILE" << LINKS
 [1] VLESS-Reality-TCP (443):
 $VLESS_TCP
@@ -297,13 +297,12 @@ LINKS
 }
 
 # --- 核心逻辑判断 ---
-# 如果直接带参数运行（例如一键长命令），或者输入了指令，可直接走全新部署
 if [ "$1" == "install" ] || [ "$1" == "2" ]; then
     install_nodes
     exit 0
 fi
 
-# 如果直接在终端输入 sub 且不带参数，则弹出交互菜单
+# 交互菜单
 echo "============================================================"
 echo "          Hugo sing-box 多协议一键管理脚本                  "
 echo "============================================================"
@@ -327,4 +326,4 @@ case "$CHOICE" in
         echo "❌ 无效输入，脚本已退出。"
         exit 1
         ;;
-es:
+esac
