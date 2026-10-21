@@ -12,60 +12,38 @@ CLIENT_JSON="/etc/sing-box/client_config.json"
 CLASH_YAML="/etc/sing-box/clash_config.yaml"
 SUB_PORT=2082
 
-# 显示当前已保存节点及所有订阅信息的函数
+# 显示当前已保存节点及订阅信息的函数
 show_nodes() {
     if [ -f "$LOG_FILE" ]; then
         IP_ADDR=$(curl -s https://api.ipify.org || echo "你的IP")
-        AUTO_URL="http://$IP_ADDR:$SUB_PORT/auto"
-
         echo "============================================================"
         echo "✨ 当前服务器已生成的 8 大协议节点信息如下："
         echo "============================================================"
         cat "$LOG_FILE"
         echo ""
         echo "============================================================"
-        echo "🔗 全部订阅链接汇总 (专属接口 + 智能自适应):"
-        echo "============================================================"
-        echo "  1. 通用节点订阅 (V2rayN / 小火箭 / v2rayNG 等):"
-        echo "     http://$IP_ADDR:$SUB_PORT/sub"
+        echo "🔗 智能自适应订阅 (自动识别 Clash / V2rayN / Throne / Shadowrocket / SFI):"
+        echo "   http://$IP_ADDR:$SUB_PORT/auto"
         echo ""
-        echo "  2. SFI / SFA / SFM 专属订阅 (Sing-box JSON):"
-        echo "     http://$IP_ADDR:$SUB_PORT/sing-box"
-        echo ""
-        echo "  3. Clash 专属订阅 (Clash Verge / MetaCubeX YAML):"
-        echo "     http://$IP_ADDR:$SUB_PORT/clash"
-        echo ""
-        echo "  4. 智能自适应订阅 (自动识别客户端分发):"
-        echo "     $AUTO_URL"
-        echo "============================================================"
-        
-        # 检查并生成自适应链接的二维码
-        if ! command -v qrencode &> /dev/null; then
-            apt-get update -y && apt-get install -y qrencode 2>/dev/null || yum install -y qrencode 2>/dev/null
-        fi
-
-        if command -v qrencode &> /dev/null; then
-            echo "📱 智能自适应订阅二维码（扫码自动适配对应客户端）："
-            echo ""
-            qrencode -t ANSIUTF8 "$AUTO_URL"
-        else
-            echo "💡 提示: 安装 qrencode 后可在终端直接显示订阅二维码。"
-        fi
+        echo "🔗 各端专属订阅接口 (可选):"
+        echo "   - 通用 Base64: http://$IP_ADDR:$SUB_PORT/sub"
+        echo "   - Sing-box JSON: http://$IP_ADDR:$SUB_PORT/sing-box"
+        echo "   - Clash YAML:  http://$IP_ADDR:$SUB_PORT/clash"
         echo "============================================================"
     else
         echo "❌ 未找到已保存的节点信息！请先运行全新部署。"
     fi
 }
 
-# 部署并启动轻量级 HTTP 多路由订阅托管服务
+# 部署并启动轻量级 HTTP 自适应订阅托管服务
 setup_sub_service() {
-    echo "==> 配置 HTTP 多路由订阅托管服务 (端口: $SUB_PORT)..."
+    echo "==> 配置 HTTP 自适应订阅托管服务 (端口: $SUB_PORT)..."
     
     if ! command -v python3 &> /dev/null; then
         apt-get update -y && apt-get install -y python3 2>/dev/null || yum install -y python3 2>/dev/null
     fi
 
-    # 编写后台轻量 HTTP 订阅服务脚本（同时支持 /sub, /sing-box, /clash, /auto）
+    # 编写后台轻量 HTTP 订阅服务脚本（支持智能 UA 识别与自适应分发）
     cat > /etc/sing-box/sub_server.py << 'PYEOF'
 import http.server
 import socketserver
@@ -80,18 +58,21 @@ class SubHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         ua = self.headers.get('User-Agent', '').lower()
         
+        # 显式路径匹配
         if self.path == '/sub':
             self.send_file(SUB_B64, 'text/plain; charset=utf-8')
         elif self.path == '/sing-box':
             self.send_file(CLIENT_JSON, 'application/json; charset=utf-8')
         elif self.path == '/clash':
             self.send_file(CLASH_YAML, 'text/yaml; charset=utf-8')
-        elif self.path in ['/auto', '/auto2']:
+        elif self.path == '/auto':
+            # 智能 UA 识别自适应分发
             if any(k in ua for k in ['clash', 'meta', 'verge', 'nyanpasu']):
                 self.send_file(CLASH_YAML, 'text/yaml; charset=utf-8')
             elif any(k in ua for k in ['sing-box', 'sfi', 'sfa', 'sfm']):
                 self.send_file(CLIENT_JSON, 'application/json; charset=utf-8')
             else:
+                # 默认返回通用 Base64 (适配 V2rayN, Shadowrocket, Throne 等)
                 self.send_file(SUB_B64, 'text/plain; charset=utf-8')
         else:
             self.send_error(403, "Access Denied")
@@ -115,6 +96,7 @@ if __name__ == "__main__":
         httpd.serve_forever()
 PYEOF
 
+    # 创建 systemd 开机自启服务
     cat > /etc/systemd/system/hugo-sub.service << SERVICEOF
 [Unit]
 Description=Hugo Sub HTTP Service
@@ -133,7 +115,7 @@ SERVICEOF
     systemctl daemon-reload
     systemctl enable hugo-sub
     systemctl restart hugo-sub
-    echo "✅ 多路由订阅托管服务已启动！"
+    echo "✅ 自适应订阅托管服务已启动！"
 }
 
 # 完全卸载/清理函数
@@ -181,7 +163,7 @@ install_nodes() {
     echo "==> 0. 检查并自动安装 sing-box 核心..."
     if ! command -v sing-box &> /dev/null; then
         echo "检测到系统未安装 sing-box，正在自动安装..."
-        apt-get update -y && apt-get install -y curl wget jq openssl python3 qrencode
+        apt-get update -y && apt-get install -y curl wget jq openssl python3
         bash <(curl -fsSL https://sing-box.app/deb-install.sh)
         echo "✅ sing-box 安装完成！"
     else
@@ -271,6 +253,7 @@ CONFIG
     systemctl enable sing-box
     systemctl restart sing-box
 
+    # 拼接节点链接
     VLESS_TCP="vless://$UUID@$IP:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$SNI&fp=chrome&pbk=$PUB_KEY&sid=$SHORT_ID&type=tcp#Hugo-Reality-TCP"
     VLESS_GP="vless://$UUID@$IP:444?encryption=none&security=reality&sni=$SNI&fp=chrome&pbk=$PUB_KEY&sid=$SHORT_ID&type=grpc&serviceName=hugogrpc#Hugo-Reality-gRPC"
     XTLS_EXTRA="vless://$UUID@$IP:8881?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$SNI&fp=chrome&pbk=$PUB_KEY&sid=$SHORT_ID&type=tcp#Hugo-XTLS-Reality-8881"
@@ -310,6 +293,7 @@ $SOCKS_LINK
 ============================================================
 LINKS
 
+    # 1. 生成 Base64 订阅文件
     RAW_SUBS="$VLESS_TCP
 $VLESS_GP
 $XTLS_EXTRA
@@ -320,6 +304,7 @@ $TROJAN_LINK
 $SOCKS_LINK"
     echo -n "$RAW_SUBS" | base64 | tr -d '\n' > "$SUB_FILE"
 
+    # 2. 生成 sing-box 客户端专用的 JSON 配置
     cat > "$CLIENT_JSON" << CLIEOF
 {
   "log": { "level": "info" },
@@ -357,6 +342,7 @@ $SOCKS_LINK"
 }
 CLIEOF
 
+    # 3. 生成 Clash 专用的 YAML 配置
     cat > "$CLASH_YAML" << CLASHEOF
 proxies:
   - name: "Hugo-Reality-TCP"
@@ -461,7 +447,7 @@ fi
 echo "============================================================"
 echo "          Hugo sing-box 多协议一键管理脚本                  "
 echo "============================================================"
-echo "  1. 查看当前节点信息、全部订阅链接及二维码"
+echo "  1. 查看当前节点信息及自适应订阅链接"
 echo "  2. 全新部署 / 重置 8 大协议节点（生成新配置及订阅）"
 echo "  3. 彻底卸载 sing-box 及清除所有服务"
 echo "  0. 退出"
